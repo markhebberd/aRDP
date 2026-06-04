@@ -1,0 +1,343 @@
+diff --git a/client/Android/Studio/freeRDPCore/build.gradle b/client/Android/Studio/freeRDPCore/build.gradle
+index c6af2a1..88664f8 100644
+--- a/client/Android/Studio/freeRDPCore/build.gradle
++++ b/client/Android/Studio/freeRDPCore/build.gradle
+@@ -13,7 +13,7 @@ android {
+     defaultConfig {
+         minSdkVersion rootProject.ext.minApi
+         targetSdkVersion rootProject.ext.targetApi
+-	ndkVersion = "29.0.13113456"
++	ndkVersion = "29.0.14206865"
+ 
+         ndk {
+             //noinspection ChromeOsAbiSupport
+@@ -27,12 +27,12 @@ android {
+             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+             externalNativeBuild {
+                 cmake {
+-                    arguments "-DWITH_FFMPEG=ON", "-DWITH_OPENH264=ON",
+-                              "-DWITH_OPUS=ON",   "-DWITH_WEBP=ON", 
+-                              "-DWITH_JPEG=ON",   "-DWITH_PNG=ON", 
+-                              "-DWITH_CJSON=ON",  "-DWITH_OPENSSL=ON"
++                    arguments "-DWITH_FFMPEG=OFF", "-DWITH_OPENH264=ON",
++                              "-DWITH_OPUS=OFF",   "-DWITH_WEBP=OFF",
++                              "-DWITH_JPEG=OFF",   "-DWITH_PNG=OFF",
++                              "-DWITH_CJSON=OFF",  "-DWITH_OPENSSL=ON"
+ 
+-                    abiFilters "arm64-v8a", "armeabi-v7a", "x86_64", "x86"
++                    abiFilters "arm64-v8a"
+                 }
+             }
+         }
+@@ -40,9 +40,9 @@ android {
+             jniDebuggable true
+             externalNativeBuild {
+                 cmake {
+-                    arguments "-DWITH_FFMPEG=OFF", "-DWITH_OPENH264=OFF",
+-                              "-DWITH_OPUS=OFF",   "-DWITH_WEBP=OFF", 
+-                              "-DWITH_JPEG=OFF",   "-DWITH_PNG=OFF", 
++                    arguments "-DWITH_FFMPEG=OFF", "-DWITH_OPENH264=ON",
++                              "-DWITH_OPUS=OFF",   "-DWITH_WEBP=OFF",
++                              "-DWITH_JPEG=OFF",   "-DWITH_PNG=OFF",
+                               "-DWITH_CJSON=OFF",  "-DWITH_OPENSSL=ON"
+ 
+                     abiFilters "arm64-v8a"
+diff --git a/client/Android/Studio/freeRDPCore/src/main/cpp/android_freerdp.c b/client/Android/Studio/freeRDPCore/src/main/cpp/android_freerdp.c
+index 6a85c0e..91063e9 100644
+--- a/client/Android/Studio/freeRDPCore/src/main/cpp/android_freerdp.c
++++ b/client/Android/Studio/freeRDPCore/src/main/cpp/android_freerdp.c
+@@ -57,6 +57,20 @@
+ 
+ /* Defines the JNI version supported by this library. */
+ #define FREERDP_JNI_VERSION FREERDP_VERSION_FULL
++
++static UINT android_disp_caps(DispClientContext* disp, UINT32 maxNumMonitors,
++                              UINT32 maxMonitorAreaFactorA, UINT32 maxMonitorAreaFactorB)
++{
++	androidContext* afc;
++	WINPR_ASSERT(disp);
++	afc = (androidContext*)disp->custom;
++	WINPR_ASSERT(afc);
++	WLog_DBG(TAG, "DisplayControlCaps: maxMonitors=%"PRIu32", maxArea=%"PRIu32"x%"PRIu32,
++	         maxNumMonitors, maxMonitorAreaFactorA, maxMonitorAreaFactorB);
++	afc->dispActivated = TRUE;
++	return CHANNEL_RC_OK;
++}
++
+ static void android_OnChannelConnectedEventHandler(void* context,
+                                                    const ChannelConnectedEventArgs* e)
+ {
+@@ -76,6 +90,13 @@ static void android_OnChannelConnectedEventHandler(void* context,
+ 	{
+ 		android_cliprdr_init(afc, (CliprdrClientContext*)e->pInterface);
+ 	}
++	else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0)
++	{
++		afc->disp = (DispClientContext*)e->pInterface;
++		afc->disp->custom = afc;
++		afc->disp->DisplayControlCaps = android_disp_caps;
++		WLog_INFO(TAG, "Display control channel connected");
++	}
+ 	else
+ 		freerdp_client_OnChannelConnectedEventHandler(context, e);
+ }
+@@ -99,6 +120,12 @@ static void android_OnChannelDisconnectedEventHandler(void* context,
+ 	{
+ 		android_cliprdr_uninit(afc, (CliprdrClientContext*)e->pInterface);
+ 	}
++	else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0)
++	{
++		afc->disp = NULL;
++		afc->dispActivated = FALSE;
++		WLog_INFO(TAG, "Display control channel disconnected");
++	}
+ 	else
+ 		freerdp_client_OnChannelDisconnectedEventHandler(context, e);
+ }
+@@ -173,9 +200,24 @@ static BOOL android_desktop_resize(rdpContext* context)
+ 	WINPR_ASSERT(context->settings);
+ 	WINPR_ASSERT(context->instance);
+ 
++	rdpGdi* gdi = context->gdi;
++	const UINT32 w = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopWidth);
++	const UINT32 h = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopHeight);
++
++	WLog_INFO(TAG, "desktop_resize: %"PRIu32"x%"PRIu32, w, h);
++
++	/* Resize the GDI primary buffer to match the new server resolution */
++	if (gdi)
++	{
++		if (!gdi_resize(gdi, w, h))
++		{
++			WLog_ERR(TAG, "gdi_resize failed");
++			return FALSE;
++		}
++	}
++
+ 	freerdp_callback("OnGraphicsResize", "(JIII)V", (jlong)context->instance,
+-	                 freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopWidth),
+-	                 freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopHeight),
++	                 w, h,
+ 	                 freerdp_settings_get_uint32(context->settings, FreeRDP_ColorDepth));
+ 	return TRUE;
+ }
+@@ -866,8 +908,31 @@ Java_com_freerdp_freerdpcore_services_LibFreeRDP_freerdp_1send_1key_1event(JNIEn
+ 	ANDROID_EVENT* event;
+ 	freerdp* inst = (freerdp*)instance;
+ 	scancode = GetVirtualScanCodeFromVirtualKeyCode(keycode, 4);
++
++	/* Navigation keys need extended scancodes - hardcode them
++	   because GetVirtualScanCodeFromVirtualKeyCode returns numpad scancodes
++	   without the KBDEXT flag */
++	switch (keycode)
++	{
++		case 0x25: scancode = 0x014B; break; /* VK_LEFT */
++		case 0x26: scancode = 0x0148; break; /* VK_UP */
++		case 0x27: scancode = 0x014D; break; /* VK_RIGHT */
++		case 0x28: scancode = 0x0150; break; /* VK_DOWN */
++		case 0x24: scancode = 0x0147; break; /* VK_HOME */
++		case 0x23: scancode = 0x014F; break; /* VK_END */
++		case 0x21: scancode = 0x0149; break; /* VK_PRIOR (PgUp) */
++		case 0x22: scancode = 0x0151; break; /* VK_NEXT (PgDn) */
++		case 0x2D: scancode = 0x0152; break; /* VK_INSERT */
++		case 0x2E: scancode = 0x0153; break; /* VK_DELETE */
++		default: break; /* use the lookup result */
++	}
++
+ 	int flags = (down == JNI_TRUE) ? KBD_FLAGS_DOWN : KBD_FLAGS_RELEASE;
+ 	flags |= (scancode & KBDEXT) ? KBD_FLAGS_EXTENDED : 0;
++
++	WLog_INFO(TAG, "send_key_event: vk=0x%02X scancode=0x%04" PRIX32 " raw=0x%02" PRIX32 " flags=0x%04X ext=%s",
++	          keycode, scancode, scancode & 0xFF, flags, (scancode & KBDEXT) ? "yes" : "no");
++
+ 	event = (ANDROID_EVENT*)android_event_key_new(flags, scancode & 0xFF);
+ 
+ 	if (!event)
+@@ -878,8 +943,6 @@ Java_com_freerdp_freerdpcore_services_LibFreeRDP_freerdp_1send_1key_1event(JNIEn
+ 		android_event_free(event);
+ 		return JNI_FALSE;
+ 	}
+-
+-	WLog_DBG(TAG, "send_key_event: %" PRIu32 ", %d", scancode, flags);
+ 	return JNI_TRUE;
+ }
+ 
+@@ -958,6 +1021,41 @@ out_fail:
+ 	return ret;
+ }
+ 
++JNIEXPORT jboolean JNICALL
++Java_com_freerdp_freerdpcore_services_LibFreeRDP_freerdp_1send_1resize_1event(
++    JNIEnv* env, jclass cls, jlong instance, jint width, jint height)
++{
++	freerdp* inst = (freerdp*)instance;
++
++	if (!inst || !inst->context)
++		return JNI_FALSE;
++
++	androidContext* ctx = (androidContext*)inst->context;
++
++	if (!ctx->disp || !ctx->dispActivated)
++	{
++		WLog_WARN(TAG, "send_resize_event: disp channel not ready");
++		return JNI_FALSE;
++	}
++
++	DISPLAY_CONTROL_MONITOR_LAYOUT layout = { 0 };
++	layout.Flags = DISPLAY_CONTROL_MONITOR_PRIMARY;
++	layout.Top = 0;
++	layout.Left = 0;
++	layout.Width = (UINT32)width;
++	layout.Height = (UINT32)height;
++	layout.PhysicalWidth = (UINT32)width;
++	layout.PhysicalHeight = (UINT32)height;
++	layout.Orientation = ORIENTATION_LANDSCAPE;
++	layout.DesktopScaleFactor = 100;
++	layout.DeviceScaleFactor = 100;
++
++	WLog_INFO(TAG, "send_resize_event: %dx%d", width, height);
++
++	UINT rc = IFCALLRESULT(CHANNEL_RC_OK, ctx->disp->SendMonitorLayout, ctx->disp, 1, &layout);
++	return (rc == CHANNEL_RC_OK) ? JNI_TRUE : JNI_FALSE;
++}
++
+ JNIEXPORT jstring JNICALL
+ Java_com_freerdp_freerdpcore_services_LibFreeRDP_freerdp_1get_1jni_1version(JNIEnv* env, jclass cls)
+ {
+diff --git a/client/Android/Studio/freeRDPCore/src/main/cpp/android_freerdp.h b/client/Android/Studio/freeRDPCore/src/main/cpp/android_freerdp.h
+index 9f5157a..4e24a1e 100644
+--- a/client/Android/Studio/freeRDPCore/src/main/cpp/android_freerdp.h
++++ b/client/Android/Studio/freeRDPCore/src/main/cpp/android_freerdp.h
+@@ -18,6 +18,7 @@
+ 
+ #include <freerdp/freerdp.h>
+ #include <freerdp/client/cliprdr.h>
++#include <freerdp/client/disp.h>
+ 
+ #include "android_event.h"
+ 
+@@ -38,6 +39,9 @@ typedef struct
+ 	CLIPRDR_FORMAT* serverFormats;
+ 	CliprdrClientContext* cliprdr;
+ 	UINT32 clipboardCapabilities;
++
++	DispClientContext* disp;
++	BOOL dispActivated;
+ } androidContext;
+ 
+ #endif /* FREERDP_CLIENT_ANDROID_FREERDP_H */
+diff --git a/client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/services/LibFreeRDP.java b/client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/services/LibFreeRDP.java
+index 26a3016..19cf2d3 100644
+--- a/client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/services/LibFreeRDP.java
++++ b/client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/services/LibFreeRDP.java
+@@ -152,6 +152,8 @@ public class LibFreeRDP
+ 
+ 	private static native boolean freerdp_send_clipboard_data(long inst, String data);
+ 
++	private static native boolean freerdp_send_resize_event(long inst, int width, int height);
++
+ 	private static native String freerdp_get_last_error_string(long inst);
+ 
+ 	public static void setEventListener(EventListener l)
+@@ -389,6 +391,7 @@ public class LibFreeRDP
+ 
+ 		args.add("/kbd:unicode:on");
+ 		args.add("/cert:ignore");
++		args.add("/dynamic-resolution");
+ 		args.add("/log-level:" + debug.getDebugLevel());
+ 		String[] arrayArgs = args.toArray(new String[0]);
+ 		return freerdp_parse_arguments(inst, arrayArgs);
+@@ -487,6 +490,11 @@ public class LibFreeRDP
+ 		return freerdp_send_clipboard_data(inst, data);
+ 	}
+ 
++	public static boolean sendResizeEvent(long inst, int width, int height)
++	{
++		return freerdp_send_resize_event(inst, width, height);
++	}
++
+ 	private static void OnConnectionSuccess(long inst)
+ 	{
+ 		if (listener != null)
+diff --git a/client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/utils/KeyboardMapper.java b/client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/utils/KeyboardMapper.java
+index 7f6bb5b..d21b020 100644
+--- a/client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/utils/KeyboardMapper.java
++++ b/client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/utils/KeyboardMapper.java
+@@ -430,6 +430,40 @@ public class KeyboardMapper
+ 
+ 			case KeyEvent.ACTION_DOWN:
+ 			{
++				// Hardware navigation keys (arrows, home, end, etc.)
++				// These are not in keymapAndroid but need to be sent as VK events
++				int hwNavVk = getHardwareNavKey(event.getKeyCode());
++				if (hwNavVk != 0)
++				{
++					if (event.isCtrlPressed())
++					{
++						listener.processVirtualKey(VK_LCONTROL, true);
++					}
++					if (event.isShiftPressed())
++					{
++						listener.processVirtualKey(VK_LSHIFT, true);
++					}
++					if (event.isAltPressed())
++					{
++						listener.processVirtualKey(VK_LMENU, true);
++					}
++					listener.processVirtualKey(hwNavVk, true);
++					listener.processVirtualKey(hwNavVk, false);
++					if (event.isAltPressed())
++					{
++						listener.processVirtualKey(VK_LMENU, false);
++					}
++					if (event.isShiftPressed())
++					{
++						listener.processVirtualKey(VK_LSHIFT, false);
++					}
++					if (event.isCtrlPressed())
++					{
++						listener.processVirtualKey(VK_LCONTROL, false);
++					}
++					return true;
++				}
++
+ 				boolean modifierActive = isModifierPressed();
+ 				// if a modifier is pressed we will send a VK event (if possible) so that key
+ 				// combinations will be recognized correctly. Otherwise we will send the unicode
+@@ -722,4 +756,36 @@ public class KeyboardMapper
+ 
+ 		void modifiersChanged();
+ 	}
++
++	// Map hardware keyboard navigation keys to VK codes
++	// These are separate from keymapAndroid because they were
++	// intentionally excluded to avoid conflicts with soft keyboard
++	private static int getHardwareNavKey(int keycode)
++	{
++		switch (keycode)
++		{
++			case KeyEvent.KEYCODE_DPAD_LEFT:
++				return VK_LEFT;
++			case KeyEvent.KEYCODE_DPAD_RIGHT:
++				return VK_RIGHT;
++			case KeyEvent.KEYCODE_DPAD_UP:
++				return VK_UP;
++			case KeyEvent.KEYCODE_DPAD_DOWN:
++				return VK_DOWN;
++			case KeyEvent.KEYCODE_MOVE_HOME:
++				return VK_HOME;
++			case KeyEvent.KEYCODE_MOVE_END:
++				return VK_END;
++			case KeyEvent.KEYCODE_PAGE_UP:
++				return VK_PRIOR;
++			case KeyEvent.KEYCODE_PAGE_DOWN:
++				return VK_NEXT;
++			case KeyEvent.KEYCODE_INSERT:
++				return VK_INSERT;
++			case KeyEvent.KEYCODE_FORWARD_DEL:
++				return VK_DELETE;
++			default:
++				return 0;
++		}
++	}
+ }
