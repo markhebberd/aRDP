@@ -1,4 +1,4 @@
 [submodule "FreeRDP"]
 	path = FreeRDP
-	url = https://github.com/FreeRDP/FreeRDP.git
-	branch = 3.26.0
+	url = https://github.com/markhebberd/FreeRDP.git
+	branch = ardp-android-fixes
