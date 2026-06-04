@@ -124,12 +124,13 @@ class MainActivity : ComponentActivity() {
             username = config.username
             password = config.password
             domain = config.domain
-            // Use device screen size directly instead of AUTOMATIC
-            // (AUTOMATIC uses a bad 1.6x formula on phones)
+            // Use visible display area (accounting for system bars)
             val dm = resources.displayMetrics
+            val rect = android.graphics.Rect()
+            window.decorView.getWindowVisibleDisplayFrame(rect)
             screenSettings.setResolution(BookmarkBase.ScreenSettings.CUSTOM)
-            screenSettings.width = dm.widthPixels
-            screenSettings.height = dm.heightPixels
+            screenSettings.width = if (rect.width() > 0) rect.width() else dm.widthPixels
+            screenSettings.height = if (rect.height() > 0) rect.height() else dm.heightPixels
 
             // Reduce log noise - TRACE floods with bandwidth PDUs
             debugSettings.setDebugLevel("INFO")
