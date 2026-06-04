@@ -22,6 +22,7 @@ class DynamicResolutionActivity : SessionActivity() {
         private const val RESIZE_DEBOUNCE_MS = 500L
         private const val INITIAL_RESIZE_DELAY_MS = 3000L
 
+        private const val VK_LSHIFT = 0xA0
         private const val VK_LCONTROL = 0xA2
         private const val VK_LMENU = 0xA4
         private const val VK_LWIN = 0x5B
@@ -107,49 +108,69 @@ class DynamicResolutionActivity : SessionActivity() {
         return sessions.firstOrNull()?.instance
     }
 
-    private var metaConsumedByCombo = false
+    // Track which modifiers WE sent down so we always release them
+    private var shiftSentDown = false
+    private var ctrlSentDown = false
+    private var altSentDown = false
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val inst = getSessionInstance() ?: return super.dispatchKeyEvent(event)
 
-        // Pass standalone Meta (Windows) key directly to RDP
-        if (event.keyCode == KeyEvent.KEYCODE_META_LEFT || event.keyCode == KeyEvent.KEYCODE_META_RIGHT) {
+        // Ctrl+Esc -> send as Win key (Start menu)
+        if (event.keyCode == KeyEvent.KEYCODE_ESCAPE &&
+            event.metaState and KeyEvent.META_CTRL_MASK != 0
+        ) {
             when (event.action) {
                 KeyEvent.ACTION_DOWN -> {
                     if (event.repeatCount == 0) {
-                        metaConsumedByCombo = false
                         LibFreeRDP.sendKeyEvent(inst, VK_LWIN, true)
+                        LibFreeRDP.sendKeyEvent(inst, VK_LWIN, false)
                     }
-                }
-                KeyEvent.ACTION_UP -> {
-                    LibFreeRDP.sendKeyEvent(inst, VK_LWIN, false)
                 }
             }
             return true
         }
 
-        // Intercept Ctrl/Alt/Meta combos that Android would steal
+        // Intercept Ctrl/Alt combos that Android would steal
+        val hasShift = event.metaState and KeyEvent.META_SHIFT_MASK != 0
         val hasCtrl = event.metaState and KeyEvent.META_CTRL_MASK != 0
         val hasAlt = event.metaState and KeyEvent.META_ALT_MASK != 0
-        val hasMeta = event.metaState and KeyEvent.META_META_MASK != 0
 
-        if (hasCtrl || hasAlt || hasMeta) {
+        if (hasCtrl || hasAlt) {
             val vk = KEY_MAP[event.keyCode]
             if (vk != null) {
                 when (event.action) {
                     KeyEvent.ACTION_DOWN -> {
                         if (event.repeatCount == 0) {
-                            // Meta key already sent as down above, just send Ctrl/Alt + key
-                            if (hasCtrl) LibFreeRDP.sendKeyEvent(inst, VK_LCONTROL, true)
-                            if (hasAlt) LibFreeRDP.sendKeyEvent(inst, VK_LMENU, true)
-                            metaConsumedByCombo = hasMeta
+                            if (hasCtrl) {
+                                LibFreeRDP.sendKeyEvent(inst, VK_LCONTROL, true)
+                                ctrlSentDown = true
+                            }
+                            if (hasAlt) {
+                                LibFreeRDP.sendKeyEvent(inst, VK_LMENU, true)
+                                altSentDown = true
+                            }
+                            if (hasShift) {
+                                LibFreeRDP.sendKeyEvent(inst, VK_LSHIFT, true)
+                                shiftSentDown = true
+                            }
                             LibFreeRDP.sendKeyEvent(inst, vk, true)
                         }
                     }
                     KeyEvent.ACTION_UP -> {
                         LibFreeRDP.sendKeyEvent(inst, vk, false)
-                        if (hasAlt) LibFreeRDP.sendKeyEvent(inst, VK_LMENU, false)
-                        if (hasCtrl) LibFreeRDP.sendKeyEvent(inst, VK_LCONTROL, false)
+                        if (shiftSentDown) {
+                            LibFreeRDP.sendKeyEvent(inst, VK_LSHIFT, false)
+                            shiftSentDown = false
+                        }
+                        if (altSentDown) {
+                            LibFreeRDP.sendKeyEvent(inst, VK_LMENU, false)
+                            altSentDown = false
+                        }
+                        if (ctrlSentDown) {
+                            LibFreeRDP.sendKeyEvent(inst, VK_LCONTROL, false)
+                            ctrlSentDown = false
+                        }
                     }
                 }
                 return true
@@ -158,20 +179,21 @@ class DynamicResolutionActivity : SessionActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    override fun onGenericMotionEvent(e: MotionEvent): Boolean {
-        // Invert scroll wheel direction (natural scrolling)
-        if (e.action == MotionEvent.ACTION_SCROLL) {
-            val inst = getSessionInstance() ?: return super.onGenericMotionEvent(e)
-            val vScroll = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
-            if (vScroll != 0f) {
-                // Flip: positive vScroll (wheel up) -> scroll down, negative -> scroll up
-                val down = vScroll > 0
-                LibFreeRDP.sendCursorEvent(inst, 0, 0,
-                    com.freerdp.freerdpcore.utils.Mouse.getScrollEvent(this, down))
-                return true
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        // Intercept scroll BEFORE the view hierarchy to invert direction
+        if (event.action == MotionEvent.ACTION_SCROLL) {
+            val inst = getSessionInstance()
+            if (inst != null) {
+                val vScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                if (vScroll != 0f) {
+                    val down = vScroll < 0
+                    LibFreeRDP.sendCursorEvent(inst, 0, 0,
+                        com.freerdp.freerdpcore.utils.Mouse.getScrollEvent(this, down))
+                    return true
+                }
             }
         }
-        return super.onGenericMotionEvent(e)
+        return super.dispatchGenericMotionEvent(event)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
