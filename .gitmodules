@@ -1,0 +1,4 @@
+[submodule "FreeRDP"]
+	path = FreeRDP
+	url = https://github.com/FreeRDP/FreeRDP.git
+	branch = 3.26.0
