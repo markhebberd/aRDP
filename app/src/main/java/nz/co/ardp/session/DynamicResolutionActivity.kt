@@ -7,11 +7,13 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.ViewTreeObserver
 import androidx.preference.PreferenceManager
 import com.freerdp.freerdpcore.application.GlobalApp
 import com.freerdp.freerdpcore.presentation.SessionActivity
 import com.freerdp.freerdpcore.services.LibFreeRDP
+import android.content.res.Configuration.KEYBOARD_QWERTY
 
 class DynamicResolutionActivity : SessionActivity() {
 
@@ -25,11 +27,7 @@ class DynamicResolutionActivity : SessionActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        PreferenceManager.getDefaultSharedPreferences(this).edit()
-            .putBoolean("ui.hide_action_bar", true)
-            .putBoolean("ui.hide_status_bar", true)
-            .putBoolean("ui.hide_navigation_bar", true)
-            .apply()
+        updateActionBarVisibility()
         super.onCreate(savedInstanceState)
         window.decorView.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
         handler.postDelayed({ sendResizeFromView() }, 3000L)
@@ -93,9 +91,42 @@ class DynamicResolutionActivity : SessionActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    override fun onGenericMotionEvent(e: MotionEvent): Boolean {
+        if (e.action == MotionEvent.ACTION_SCROLL) {
+            var inst = 0L
+            for (s in GlobalApp.getSessions()) { inst = s.instance; break }
+            if (inst != 0L) {
+                val vScroll = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                if (vScroll != 0f) {
+                    LibFreeRDP.sendCursorEvent(inst, 0, 0,
+                        com.freerdp.freerdpcore.utils.Mouse.getScrollEvent(this, vScroll < 0))
+                    return true
+                }
+            }
+        }
+        return super.onGenericMotionEvent(e)
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        updateActionBarVisibility()
         scheduleResize()
+    }
+
+    private fun hasHardwareKeyboard(): Boolean {
+        val config = resources.configuration
+        return config.keyboard == Configuration.KEYBOARD_QWERTY &&
+            config.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO
+    }
+
+    private fun updateActionBarVisibility() {
+        val hide = hasHardwareKeyboard()
+        Log.d("DynamicResolution", "keyboard=${resources.configuration.keyboard} hidden=${resources.configuration.hardKeyboardHidden} hideActionBar=$hide")
+        PreferenceManager.getDefaultSharedPreferences(this).edit()
+            .putBoolean("ui.hide_action_bar", hide)
+            .putBoolean("ui.hide_status_bar", false)
+            .putBoolean("ui.hide_navigation_bar", false)
+            .apply()
     }
 
     private fun scheduleResize() {
