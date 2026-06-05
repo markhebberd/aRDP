@@ -2,18 +2,26 @@ package nz.co.ardp.session
 
 import android.content.res.Configuration
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewTreeObserver
+import android.view.WindowManager
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.preference.PreferenceManager
 import com.freerdp.freerdpcore.application.GlobalApp
 import com.freerdp.freerdpcore.presentation.SessionActivity
 import com.freerdp.freerdpcore.services.LibFreeRDP
-import android.content.res.Configuration.KEYBOARD_QWERTY
+import nz.co.ardp.R
 
 class DynamicResolutionActivity : SessionActivity() {
 
@@ -21,14 +29,24 @@ class DynamicResolutionActivity : SessionActivity() {
     private var pendingResize: Runnable? = null
     private var lastWidth = 0
     private var lastHeight = 0
+    companion object {
+        private const val MENU_FULLSCREEN = 99999
+    }
 
     private val layoutListener = ViewTreeObserver.OnGlobalLayoutListener {
         scheduleResize()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        updateActionBarVisibility()
+        // Apply saved display prefs (don't reset them)
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        prefs.edit()
+            .putBoolean("ui.hide_action_bar", prefs.getBoolean("ui.hide_action_bar", false))
+            .putBoolean("ui.hide_status_bar", prefs.getBoolean("ui.hide_status_bar", false))
+            .putBoolean("ui.hide_navigation_bar", prefs.getBoolean("ui.hide_navigation_bar", false))
+            .apply()
         super.onCreate(savedInstanceState)
+        applyDisplaySettings()
         window.decorView.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
         handler.postDelayed({ sendResizeFromView() }, 3000L)
     }
@@ -107,26 +125,111 @@ class DynamicResolutionActivity : SessionActivity() {
         return super.onGenericMotionEvent(e)
     }
 
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (PreferenceManager.getDefaultSharedPreferences(this)
+                .getBoolean("ui.hide_action_bar", false)) {
+            // Briefly show action bar without changing resolution
+            supportActionBar?.show()
+            // Auto-hide after 3 seconds
+            handler.postDelayed({
+                if (PreferenceManager.getDefaultSharedPreferences(this)
+                        .getBoolean("ui.hide_action_bar", false)) {
+                    supportActionBar?.hide()
+                }
+            }, 3000L)
+            return
+        }
+        super.onBackPressed()
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        super.onCreateOptionsMenu(menu)
+        menu.add(0, MENU_FULLSCREEN, 100, "Display")
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == MENU_FULLSCREEN) {
+            showDisplayDialog()
+            return true
+        }
+        return super.onOptionsItemSelected(item)
+    }
+
+    private fun showDisplayDialog() {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val labels = arrayOf("Hide Status Bar", "Hide Navigation Bar", "Hide Action Bar", "Use Display Cutout")
+        val keys = arrayOf("ui.hide_status_bar", "ui.hide_navigation_bar", "ui.hide_action_bar", "ui.use_cutout")
+        val checked = booleanArrayOf(
+            prefs.getBoolean(keys[0], false),
+            prefs.getBoolean(keys[1], false),
+            prefs.getBoolean(keys[2], false),
+            prefs.getBoolean(keys[3], false),
+        )
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Display Options")
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked ->
+                checked[which] = isChecked
+                prefs.edit().putBoolean(keys[which], isChecked).apply()
+                applyDisplaySettings()
+            }
+            .setPositiveButton("Done", null)
+            .show()
+    }
+
+    private fun applyDisplaySettings() {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val hideStatus = prefs.getBoolean("ui.hide_status_bar", false)
+        val hideNav = prefs.getBoolean("ui.hide_navigation_bar", false)
+        val hideAction = prefs.getBoolean("ui.hide_action_bar", false)
+        val useCutout = prefs.getBoolean("ui.use_cutout", false)
+
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+
+        // Status bar
+        if (hideStatus) controller.hide(WindowInsetsCompat.Type.statusBars())
+        else controller.show(WindowInsetsCompat.Type.statusBars())
+
+        // Navigation bar
+        if (hideNav) controller.hide(WindowInsetsCompat.Type.navigationBars())
+        else controller.show(WindowInsetsCompat.Type.navigationBars())
+
+        if (hideStatus || hideNav) {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+
+        // Action bar
+        if (hideAction) supportActionBar?.hide()
+        else supportActionBar?.show()
+
+        // Display cutout
+        if (useCutout) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.attributes.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                window.attributes.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                window.attributes.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+            }
+            WindowCompat.setDecorFitsSystemWindows(window, !(hideStatus && hideNav))
+        }
+
+        handler.postDelayed({ sendResizeFromView() }, 500L)
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        updateActionBarVisibility()
+        applyDisplaySettings()
         scheduleResize()
-    }
-
-    private fun hasHardwareKeyboard(): Boolean {
-        val config = resources.configuration
-        return config.keyboard == Configuration.KEYBOARD_QWERTY &&
-            config.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO
-    }
-
-    private fun updateActionBarVisibility() {
-        val hide = hasHardwareKeyboard()
-        Log.d("DynamicResolution", "keyboard=${resources.configuration.keyboard} hidden=${resources.configuration.hardKeyboardHidden} hideActionBar=$hide")
-        PreferenceManager.getDefaultSharedPreferences(this).edit()
-            .putBoolean("ui.hide_action_bar", hide)
-            .putBoolean("ui.hide_status_bar", false)
-            .putBoolean("ui.hide_navigation_bar", false)
-            .apply()
     }
 
     private fun scheduleResize() {
