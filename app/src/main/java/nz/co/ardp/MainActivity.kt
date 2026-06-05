@@ -124,15 +124,66 @@ class MainActivity : ComponentActivity() {
             username = config.username
             password = config.password
             domain = config.domain
-            // Use visible display area (accounting for system bars)
+            // Use visible display area, subtract action bar height
             val dm = resources.displayMetrics
             val rect = android.graphics.Rect()
             window.decorView.getWindowVisibleDisplayFrame(rect)
+            var w = if (rect.width() > 0) rect.width() else dm.widthPixels
+            var h = if (rect.height() > 0) rect.height() else dm.heightPixels
+            // Subtract action bar unless user has hidden it
+            val hideAb = androidx.preference.PreferenceManager
+                .getDefaultSharedPreferences(applicationContext)
+                .getBoolean("ui.hide_action_bar", false)
+            if (!hideAb) {
+                val tv = android.util.TypedValue()
+                if (theme.resolveAttribute(android.R.attr.actionBarSize, tv, true)) {
+                    h -= android.util.TypedValue.complexToDimensionPixelSize(tv.data, dm)
+                }
+            }
             screenSettings.setResolution(BookmarkBase.ScreenSettings.CUSTOM)
-            screenSettings.width = if (rect.width() > 0) rect.width() else dm.widthPixels
-            screenSettings.height = if (rect.height() > 0) rect.height() else dm.heightPixels
+            screenSettings.width = w
+            screenSettings.height = h
 
-            // Reduce log noise - TRACE floods with bandwidth PDUs
+            // Apply quality settings
+            val quality = androidx.preference.PreferenceManager
+                .getDefaultSharedPreferences(applicationContext)
+                .getString("rdp.quality", "high") ?: "high"
+            when (quality) {
+                "high" -> {
+                    performanceFlags.setGfx(true)
+                    performanceFlags.setH264(true)
+                    performanceFlags.setRemoteFX(false)
+                    performanceFlags.setWallpaper(true)
+                    performanceFlags.setFontSmoothing(true)
+                    performanceFlags.setDesktopComposition(true)
+                    performanceFlags.setTheming(true)
+                    performanceFlags.setMenuAnimations(true)
+                    performanceFlags.setFullWindowDrag(true)
+                }
+                "medium" -> {
+                    performanceFlags.setGfx(true)
+                    performanceFlags.setH264(false)
+                    performanceFlags.setRemoteFX(false)
+                    performanceFlags.setWallpaper(false)
+                    performanceFlags.setFontSmoothing(true)
+                    performanceFlags.setDesktopComposition(false)
+                    performanceFlags.setTheming(true)
+                    performanceFlags.setMenuAnimations(false)
+                    performanceFlags.setFullWindowDrag(false)
+                }
+                "low" -> {
+                    performanceFlags.setGfx(true)
+                    performanceFlags.setH264(false)
+                    performanceFlags.setRemoteFX(false)
+                    performanceFlags.setWallpaper(false)
+                    performanceFlags.setFontSmoothing(false)
+                    performanceFlags.setDesktopComposition(false)
+                    performanceFlags.setTheming(false)
+                    performanceFlags.setMenuAnimations(false)
+                    performanceFlags.setFullWindowDrag(false)
+                }
+            }
+
             debugSettings.setDebugLevel("INFO")
         }
 

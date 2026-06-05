@@ -31,6 +31,7 @@ class DynamicResolutionActivity : SessionActivity() {
     private var lastHeight = 0
     companion object {
         private const val MENU_FULLSCREEN = 99999
+        private const val MENU_QUALITY = 99998
     }
 
     private val layoutListener = ViewTreeObserver.OnGlobalLayoutListener {
@@ -48,7 +49,7 @@ class DynamicResolutionActivity : SessionActivity() {
         super.onCreate(savedInstanceState)
         applyDisplaySettings()
         window.decorView.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
-        handler.postDelayed({ sendResizeFromView() }, 3000L)
+        // No initial corrective resize - MainActivity sets the correct resolution
 
         // TODO: foreground service for background persistence
     }
@@ -173,6 +174,7 @@ class DynamicResolutionActivity : SessionActivity() {
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         super.onCreateOptionsMenu(menu)
+        menu.add(0, MENU_QUALITY, 99, "Quality")
         menu.add(0, MENU_FULLSCREEN, 100, "Display")
         return true
     }
@@ -182,10 +184,62 @@ class DynamicResolutionActivity : SessionActivity() {
             showDisplayDialog()
             return true
         }
+        if (item.itemId == MENU_QUALITY) {
+            showQualityDialog()
+            return true
+        }
         return super.onOptionsItemSelected(item)
     }
 
     private var displayDialog: DisplaySettingsDialog? = null
+
+    private fun showQualityDialog() {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val currentQuality = prefs.getString("rdp.quality", "high") ?: "high"
+        val qualities = arrayOf("High (AVC444 + effects)", "Medium (GFX + no effects)", "Low (GFX minimal)")
+        val keys = arrayOf("high", "medium", "low")
+        val currentIndex = keys.indexOf(currentQuality).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Connection Quality")
+            .setSingleChoiceItems(qualities, currentIndex) { dialog, which ->
+                val oldQuality = prefs.getString("rdp.quality", "high")
+                val newQuality = keys[which]
+                if (newQuality != oldQuality) {
+                    prefs.edit().putString("rdp.quality", newQuality).apply()
+                    dialog.dismiss()
+                    reconnectWithQuality(newQuality, oldQuality ?: "high")
+                } else {
+                    dialog.dismiss()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun reconnectWithQuality(newQuality: String, oldQuality: String) {
+        // Show confirmation with auto-revert
+        val revertRunnable = Runnable {
+            PreferenceManager.getDefaultSharedPreferences(this)
+                .edit().putString("rdp.quality", oldQuality).apply()
+            android.widget.Toast.makeText(this, "Reverted to previous quality", android.widget.Toast.LENGTH_SHORT).show()
+        }
+
+        android.widget.Toast.makeText(this,
+            "Reconnecting with ${newQuality} quality...", android.widget.Toast.LENGTH_SHORT).show()
+
+        // Disconnect current session and restart activity with new settings
+        for (s in GlobalApp.getSessions()) {
+            LibFreeRDP.disconnect(s.instance)
+        }
+
+        // Restart the session activity - MainActivity will read the quality pref
+        handler.postDelayed({
+            val intent = intent
+            finish()
+            startActivity(intent)
+        }, 500L)
+    }
 
     private fun showDisplayDialog() {
         displayDialog?.dismiss()
@@ -260,14 +314,25 @@ class DynamicResolutionActivity : SessionActivity() {
     }
 
     private fun sendResizeFromView() {
-        val decorView = window.decorView
-        decorView.post {
-            val r = Rect()
-            decorView.getWindowVisibleDisplayFrame(r)
-            if (r.width() <= 0 || r.height() <= 0) return@post
-            if (r.width() == lastWidth && r.height() == lastHeight) return@post
-            lastWidth = r.width()
-            lastHeight = r.height()
+        val rootView = findViewById<View>(com.freerdp.freerdpcore.R.id.session_root_view)
+            ?: window.decorView
+        rootView.post {
+            val w = rootView.width
+            var h = rootView.height
+
+            // session_root_view includes action bar - subtract when visible
+            val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+            if (!prefs.getBoolean("ui.hide_action_bar", false) && supportActionBar?.isShowing == true) {
+                val abh = supportActionBar?.height ?: 0
+                if (abh > 0) h -= abh
+            }
+
+            Log.d("DynamicResolution", "resize: ${w}x${h} (root=${rootView.height} ab=${supportActionBar?.height})")
+
+            if (w <= 0 || h <= 0) return@post
+            if (w == lastWidth && h == lastHeight) return@post
+            lastWidth = w
+            lastHeight = h
             Log.i("DynamicResolution", "Resize: ${lastWidth}x${lastHeight}")
             for (s in GlobalApp.getSessions()) {
                 LibFreeRDP.sendResizeEvent(s.instance, lastWidth, lastHeight)
