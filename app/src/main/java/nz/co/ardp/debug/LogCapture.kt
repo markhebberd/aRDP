@@ -30,7 +30,10 @@ class LogCapture(private val context: Context) {
                     while (reader.readLine().also { line = it } != null) {
                         val l = line ?: continue
                         // Capture FreeRDP-related and connection-related logs
-                        if (l.contains("KEY") || l.contains("FreeRDP") || l.contains("freerdp") ||
+                        if (l.contains("FATAL") || l.contains("AndroidRuntime") ||
+                            l.contains("KeepAlive") || l.contains("ServiceStart") ||
+                            l.contains("ForegroundService") || l.contains("permission") ||
+                            l.contains("KEY") || l.contains("FreeRDP") || l.contains("freerdp") ||
                             l.contains("LibFreeRDP") || l.contains("client.android") ||
                             l.contains("DynamicResolution") || l.contains("disp") ||
                             l.contains("DISP") || l.contains("Display control") ||

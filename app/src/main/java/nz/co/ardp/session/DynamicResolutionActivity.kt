@@ -49,6 +49,34 @@ class DynamicResolutionActivity : SessionActivity() {
         applyDisplaySettings()
         window.decorView.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
         handler.postDelayed({ sendResizeFromView() }, 3000L)
+
+        // TODO: foreground service for background persistence
+    }
+
+    private fun startKeepAliveService() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+                return
+            }
+        }
+        try {
+            SessionKeepAliveService.start(this)
+        } catch (e: Exception) {
+            Log.w("DynamicResolution", "Could not start keep-alive service: ${e.message}")
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1) {
+            try {
+                SessionKeepAliveService.start(this)
+            } catch (e: Exception) {
+                Log.w("DynamicResolution", "Could not start keep-alive service: ${e.message}")
+            }
+        }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -109,12 +137,12 @@ class DynamicResolutionActivity : SessionActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    override fun onGenericMotionEvent(e: MotionEvent): Boolean {
-        if (e.action == MotionEvent.ACTION_SCROLL) {
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_SCROLL) {
             var inst = 0L
             for (s in GlobalApp.getSessions()) { inst = s.instance; break }
             if (inst != 0L) {
-                val vScroll = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                val vScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
                 if (vScroll != 0f) {
                     LibFreeRDP.sendCursorEvent(inst, 0, 0,
                         com.freerdp.freerdpcore.utils.Mouse.getScrollEvent(this, vScroll < 0))
@@ -122,7 +150,7 @@ class DynamicResolutionActivity : SessionActivity() {
                 }
             }
         }
-        return super.onGenericMotionEvent(e)
+        return super.dispatchGenericMotionEvent(event)
     }
 
     @Deprecated("Deprecated in Java")
