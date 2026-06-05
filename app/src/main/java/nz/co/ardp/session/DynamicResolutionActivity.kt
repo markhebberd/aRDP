@@ -157,26 +157,13 @@ class DynamicResolutionActivity : SessionActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    private fun showDisplayDialog() {
-        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
-        val labels = arrayOf("Hide Status Bar", "Hide Navigation Bar", "Hide Action Bar", "Use Display Cutout")
-        val keys = arrayOf("ui.hide_status_bar", "ui.hide_navigation_bar", "ui.hide_action_bar", "ui.use_cutout")
-        val checked = booleanArrayOf(
-            prefs.getBoolean(keys[0], false),
-            prefs.getBoolean(keys[1], false),
-            prefs.getBoolean(keys[2], false),
-            prefs.getBoolean(keys[3], false),
-        )
+    private var displayDialog: DisplaySettingsDialog? = null
 
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Display Options")
-            .setMultiChoiceItems(labels, checked) { _, which, isChecked ->
-                checked[which] = isChecked
-                prefs.edit().putBoolean(keys[which], isChecked).apply()
-                applyDisplaySettings()
-            }
-            .setPositiveButton("Done", null)
-            .show()
+    private fun showDisplayDialog() {
+        displayDialog?.dismiss()
+        displayDialog = DisplaySettingsDialog(this) {
+            applyDisplaySettings()
+        }.also { it.show() }
     }
 
     private fun applyDisplaySettings() {
@@ -206,22 +193,24 @@ class DynamicResolutionActivity : SessionActivity() {
         else supportActionBar?.show()
 
         // Display cutout
+        val lp = window.attributes
         if (useCutout) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.attributes.layoutInDisplayCutoutMode =
+                lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                window.attributes.layoutInDisplayCutoutMode =
+                lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
             WindowCompat.setDecorFitsSystemWindows(window, false)
         } else {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                window.attributes.layoutInDisplayCutoutMode =
+                lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
             }
             WindowCompat.setDecorFitsSystemWindows(window, !(hideStatus && hideNav))
         }
+        window.attributes = lp
 
         handler.postDelayed({ sendResizeFromView() }, 500L)
     }
@@ -230,6 +219,10 @@ class DynamicResolutionActivity : SessionActivity() {
         super.onConfigurationChanged(newConfig)
         applyDisplaySettings()
         scheduleResize()
+        // Redraw display dialog if open
+        if (displayDialog?.isShowing == true) {
+            showDisplayDialog()
+        }
     }
 
     private fun scheduleResize() {

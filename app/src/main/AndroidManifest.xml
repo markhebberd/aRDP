@@ -29,7 +29,7 @@
             android:name=".session.DynamicResolutionActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboard|keyboardHidden"
             android:exported="false"
-            android:theme="@style/Theme.Main"
+            android:theme="@style/Theme.ARdp.Session"
             android:windowSoftInputMode="adjustResize" />
 
     </application>
