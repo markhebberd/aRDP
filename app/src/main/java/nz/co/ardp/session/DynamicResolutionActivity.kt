@@ -1,6 +1,7 @@
 package nz.co.ardp.session
 
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
@@ -11,6 +12,7 @@ import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
+import android.view.PointerIcon
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.WindowManager
@@ -49,7 +51,12 @@ class DynamicResolutionActivity : SessionActivity() {
         super.onCreate(savedInstanceState)
         applyDisplaySettings()
         window.decorView.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
-        // No initial corrective resize - MainActivity sets the correct resolution
+        // Set up cursor/pointer updates from remote
+        LibFreeRDP.setPointerListener(object : LibFreeRDP.PointerListener {
+            override fun OnPointerUpdate(hotspotX: Int, hotspotY: Int, w: Int, h: Int, pixels: IntArray?) {
+                runOnUiThread { updatePointer(hotspotX, hotspotY, w, h, pixels) }
+            }
+        })
 
         // TODO: foreground service for background persistence
     }
@@ -304,6 +311,25 @@ class DynamicResolutionActivity : SessionActivity() {
         // Redraw display dialog if open
         if (displayDialog?.isShowing == true) {
             showDisplayDialog()
+        }
+    }
+
+    private fun updatePointer(hotspotX: Int, hotspotY: Int, w: Int, h: Int, pixels: IntArray?) {
+        val sessionView = findViewById<View>(com.freerdp.freerdpcore.R.id.sessionView) ?: return
+        if (w <= 0 || h <= 0 || pixels == null) {
+            // Default cursor or null
+            sessionView.pointerIcon = if (w == -1)
+                PointerIcon.getSystemIcon(this, PointerIcon.TYPE_DEFAULT)
+            else
+                PointerIcon.getSystemIcon(this, PointerIcon.TYPE_NULL)
+            return
+        }
+        try {
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+            sessionView.pointerIcon = PointerIcon.create(bitmap, hotspotX.toFloat(), hotspotY.toFloat())
+        } catch (e: Exception) {
+            Log.w("DynamicResolution", "Failed to set pointer: ${e.message}")
         }
     }
 
